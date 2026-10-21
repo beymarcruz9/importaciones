@@ -198,7 +198,7 @@ export class AdminSalesHistoryComponent implements OnInit {
   searchTerm = '';
   startDate = '';
   endDate = '';
-  togglingId: number | null = null;
+  togglingId: number | string | null = null;
 
   ngOnInit(): void {
     this.loadSalesHistory();

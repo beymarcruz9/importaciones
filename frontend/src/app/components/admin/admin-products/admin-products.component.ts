@@ -739,7 +739,7 @@ export class AdminProductsComponent implements OnInit {
   // Modal Productos
   isModalOpen = false;
   isEditing = false;
-  editingId: number | null = null;
+  editingId: number | string | null = null;
   saving = false;
   isUploading: boolean[] = [false, false, false];
 
@@ -749,7 +749,7 @@ export class AdminProductsComponent implements OnInit {
   newCategoryName = '';
   newCategoryDesc = '';
   creatingCategory = false;
-  deletingCategoryId: number | null = null;
+  deletingCategoryId: number | string | null = null;
 
   // Modal Cerrar Venta con Rebaja
   isSaleModalOpen = false;
@@ -762,7 +762,7 @@ export class AdminProductsComponent implements OnInit {
   confirmingSale = false;
 
   formData = {
-    category_id: null as number | null,
+    category_id: null as number | string | null,
     name: '',
     description: '',
     cost_price: 0,

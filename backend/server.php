@@ -2,7 +2,7 @@
 /**
  * IMPORTADORA DE PRODUCTOS - SERVIDOR API RESTful
  * Servidor PHP autónomo y optimizado conectado a MySQL (importadora_db).
- * Provee compatibilidad 100% con las rutas y contratos de Laravel Sanctum.
+ * Tablas y columnas en ESPAÑOL con total compatibilidad de API para el Frontend.
  */
 
 // -----------------------------------------------------------------------------
@@ -43,8 +43,8 @@ try {
 // -----------------------------------------------------------------------------
 // 3. UTILIDADES DE ENRUTAMIENTO Y HELPERS
 // -----------------------------------------------------------------------------
-$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$method = $_SERVER['REQUEST_METHOD'];
+$uri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '';
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $body = json_decode(file_get_contents('php://input'), true) ?? [];
 
 // Servir archivos subidos estáticos directamente (/uploads/...)
@@ -63,6 +63,7 @@ if (strpos($uri, '/uploads/') === 0) {
         $contentType = $mimes[$ext] ?? 'application/octet-stream';
         header("Content-Type: {$contentType}");
         header('Cache-Control: public, max-age=86400');
+        header('Access-Control-Allow-Origin: *');
         readfile($filepath);
         exit;
     } else {
@@ -73,9 +74,12 @@ if (strpos($uri, '/uploads/') === 0) {
 }
 
 function getBearerToken(): ?string {
-    $auth = '';
+    $headers = [];
     if (function_exists('getallheaders')) {
         $headers = getallheaders();
+    }
+    $auth = '';
+    if (!empty($headers)) {
         foreach ($headers as $key => $val) {
             if (strtolower($key) === 'authorization') {
                 $auth = $val;
@@ -96,7 +100,10 @@ function authenticate(PDO $pdo): ?array {
     $token = getBearerToken();
     if (!$token) return null;
 
-    $stmt = $pdo->prepare('SELECT u.* FROM users u INNER JOIN personal_access_tokens pat ON pat.tokenable_id = u.id WHERE pat.token = :token LIMIT 1');
+    $stmt = $pdo->prepare('SELECT u.id, u.nombre as name, u.correo as email, u.rol as role 
+                           FROM usuarios u 
+                           INNER JOIN tokens_acceso pat ON pat.entidad_id = u.id 
+                           WHERE pat.token = :token LIMIT 1');
     $stmt->execute([':token' => hash('sha256', $token)]);
     $user = $stmt->fetch();
     return $user ?: null;
@@ -118,17 +125,24 @@ function attachImagesToProducts(PDO $pdo, array $products): array {
     $productIds = array_column($products, 'id');
     $inClause = implode(',', array_fill(0, count($productIds), '?'));
 
-    $stmt = $pdo->prepare("SELECT * FROM product_images WHERE product_id IN ($inClause) ORDER BY sort_order ASC");
+    $stmt = $pdo->prepare("SELECT id, producto_id, url_imagen, orden, es_principal 
+                           FROM imagenes_producto 
+                           WHERE producto_id IN ($inClause) 
+                           ORDER BY orden ASC");
     $stmt->execute($productIds);
     $images = $stmt->fetchAll();
 
     $imagesByProduct = [];
     foreach ($images as $img) {
-        $imagesByProduct[$img['product_id']][] = [
+        $url = $img['url_imagen'];
+        if (preg_match('#https?://(?:localhost|127\.0\.0\.1):8000(/uploads/.*)#', $url, $m)) {
+            $url = $m[1];
+        }
+        $imagesByProduct[$img['producto_id']][] = [
             'id'         => (int)$img['id'],
-            'image_url'  => $img['image_url'],
-            'is_primary' => (bool)$img['is_primary'],
-            'sort_order' => (int)$img['sort_order'],
+            'image_url'  => $url,
+            'is_primary' => (bool)$img['es_principal'],
+            'sort_order' => (int)$img['orden'],
         ];
     }
 
@@ -142,7 +156,7 @@ function attachImagesToProducts(PDO $pdo, array $products): array {
         $p['primary_image'] = $p['images'][0]['image_url'] ?? 'https://images.unsplash.com/photo-1560393464-5c69a73c5770?auto=format&fit=crop&w=600&q=80';
         if (isset($p['category_name'])) {
             $p['category'] = [
-                'id'   => $p['category_id'] ? (int)$p['category_id'] : null,
+                'id'   => !empty($p['category_id']) ? (int)$p['category_id'] : null,
                 'name' => $p['category_name'],
             ];
             unset($p['category_name']);
@@ -164,11 +178,11 @@ if ($uri === '/api/auth/login' && $method === 'POST') {
         exit;
     }
 
-    $stmt = $pdo->prepare('SELECT * FROM users WHERE email = :email LIMIT 1');
+    $stmt = $pdo->prepare('SELECT id, nombre, correo, contrasena, rol FROM usuarios WHERE correo = :email LIMIT 1');
     $stmt->execute([':email' => $email]);
     $user = $stmt->fetch();
 
-    if (!$user || !password_verify($password, $user['password'])) {
+    if (!$user || !password_verify($password, $user['contrasena'])) {
         http_response_code(422);
         echo json_encode([
             'message' => 'Las credenciales proporcionadas son incorrectas.',
@@ -177,11 +191,11 @@ if ($uri === '/api/auth/login' && $method === 'POST') {
         exit;
     }
 
-    // Generar token Sanctum
+    // Generar token
     $rawToken = bin2hex(random_bytes(32));
     $hashedToken = hash('sha256', $rawToken);
 
-    $stmt = $pdo->prepare('INSERT INTO personal_access_tokens (tokenable_type, tokenable_id, name, token, abilities, created_at, updated_at) VALUES (:type, :id, :name, :token, :abilities, NOW(), NOW())');
+    $stmt = $pdo->prepare('INSERT INTO tokens_acceso (tipo_entidad, entidad_id, nombre, token, habilidades, fecha_creacion, fecha_actualizacion) VALUES (:type, :id, :name, :token, :abilities, NOW(), NOW())');
     $stmt->execute([
         ':type'      => 'App\\Models\\User',
         ':id'        => $user['id'],
@@ -195,9 +209,9 @@ if ($uri === '/api/auth/login' && $method === 'POST') {
         'token'   => $rawToken,
         'user'    => [
             'id'    => (int)$user['id'],
-            'name'  => $user['name'],
-            'email' => $user['email'],
-            'role'  => $user['role'],
+            'name'  => $user['nombre'],
+            'email' => $user['correo'],
+            'role'  => $user['rol'],
         ],
     ]);
     exit;
@@ -206,7 +220,7 @@ if ($uri === '/api/auth/login' && $method === 'POST') {
 if ($uri === '/api/auth/logout' && $method === 'POST') {
     $token = getBearerToken();
     if ($token) {
-        $stmt = $pdo->prepare('DELETE FROM personal_access_tokens WHERE token = :token');
+        $stmt = $pdo->prepare('DELETE FROM tokens_acceso WHERE token = :token');
         $stmt->execute([':token' => hash('sha256', $token)]);
     }
     echo json_encode(['message' => 'Sesión cerrada correctamente.']);
@@ -215,7 +229,6 @@ if ($uri === '/api/auth/logout' && $method === 'POST') {
 
 if ($uri === '/api/auth/me' && $method === 'GET') {
     $user = requireAuth($pdo);
-    unset($user['password'], $user['remember_token']);
     echo json_encode(['user' => $user]);
     exit;
 }
@@ -223,29 +236,29 @@ if ($uri === '/api/auth/me' && $method === 'GET') {
 // -----------------------------------------------------------------------------
 // 5. MÓDULO 1: RUTAS PÚBLICAS (CLIENTES)
 // -----------------------------------------------------------------------------
-// Catálogo público de productos (oculta 'vendido' y oculta 'cost_price')
+// Catálogo público de productos (oculta 'vendido' y oculta 'precio_costo')
 if ($uri === '/api/public/products' && $method === 'GET') {
-    $where = ["p.is_active = 1", "p.status != 'vendido'", "p.deleted_at IS NULL"];
+    $where = ["p.activo = 1", "p.estado != 'vendido'", "p.fecha_eliminacion IS NULL"];
     $params = [];
 
     if (!empty($_GET['category_id'])) {
-        $where[] = "p.category_id = :category_id";
+        $where[] = "p.categoria_id = :category_id";
         $params[':category_id'] = $_GET['category_id'];
     }
 
     if (!empty($_GET['search'])) {
-        $where[] = "p.name LIKE :search";
+        $where[] = "p.nombre LIKE :search";
         $params[':search'] = '%' . $_GET['search'] . '%';
     }
 
     if (!empty($_GET['status']) && in_array($_GET['status'], ['disponible', 'reservado'])) {
-        $where[] = "p.status = :status";
+        $where[] = "p.estado = :status";
         $params[':status'] = $_GET['status'];
     }
 
-    $sql = "SELECT p.id, p.category_id, p.name, p.slug, p.description, p.sale_price, p.status, c.name as category_name 
-            FROM products p 
-            LEFT JOIN categories c ON c.id = p.category_id 
+    $sql = "SELECT p.id, p.categoria_id as category_id, p.nombre as name, p.slug, p.descripcion as description, p.precio_venta as sale_price, p.estado as status, c.nombre as category_name 
+            FROM productos p 
+            LEFT JOIN categorias c ON c.id = p.categoria_id 
             WHERE " . implode(' AND ', $where) . " ORDER BY p.id DESC";
 
     $stmt = $pdo->prepare($sql);
@@ -261,10 +274,10 @@ if ($uri === '/api/public/products' && $method === 'GET') {
 // Detalle público de producto
 if (preg_match('#^/api/public/products/([^/]+)$#', $uri, $matches) && $method === 'GET') {
     $slugOrId = $matches[1];
-    $stmt = $pdo->prepare("SELECT p.id, p.category_id, p.name, p.slug, p.description, p.sale_price, p.status, c.name as category_name 
-                           FROM products p 
-                           LEFT JOIN categories c ON c.id = p.category_id 
-                           WHERE (p.id = :val OR p.slug = :val) AND p.status != 'vendido' AND p.is_active = 1 LIMIT 1");
+    $stmt = $pdo->prepare("SELECT p.id, p.categoria_id as category_id, p.nombre as name, p.slug, p.descripcion as description, p.precio_venta as sale_price, p.estado as status, c.nombre as category_name 
+                           FROM productos p 
+                           LEFT JOIN categorias c ON c.id = p.categoria_id 
+                           WHERE (p.id = :val OR p.slug = :val) AND p.estado != 'vendido' AND p.activo = 1 LIMIT 1");
     $stmt->execute([':val' => $slugOrId]);
     $product = $stmt->fetch();
 
@@ -281,12 +294,13 @@ if (preg_match('#^/api/public/products/([^/]+)$#', $uri, $matches) && $method ==
 
 // Lista pública de categorías
 if ($uri === '/api/public/categories' && $method === 'GET') {
-    $sql = "SELECT c.*, COUNT(CASE WHEN p.is_active = 1 AND p.status != 'vendido' THEN 1 END) as products_count 
-            FROM categories c 
-            LEFT JOIN products p ON p.category_id = c.id 
-            WHERE c.is_active = 1 
+    $sql = "SELECT c.id, c.nombre as name, c.slug, c.descripcion as description, c.activo as is_active, 
+            COUNT(CASE WHEN p.activo = 1 AND p.estado != 'vendido' AND p.fecha_eliminacion IS NULL THEN 1 END) as products_count 
+            FROM categorias c 
+            LEFT JOIN productos p ON p.categoria_id = c.id 
+            WHERE c.activo = 1 
             GROUP BY c.id 
-            ORDER BY c.name ASC";
+            ORDER BY c.nombre ASC";
     $stmt = $pdo->query($sql);
     $categories = $stmt->fetchAll();
     echo json_encode(['data' => $categories]);
@@ -308,7 +322,7 @@ if (preg_match('#^/api/public/products/(\d+)/reserve$#', $uri, $matches) && $met
         exit;
     }
 
-    $stmt = $pdo->prepare("SELECT * FROM products WHERE id = :id AND is_active = 1 LIMIT 1");
+    $stmt = $pdo->prepare("SELECT * FROM productos WHERE id = :id AND activo = 1 AND fecha_eliminacion IS NULL LIMIT 1");
     $stmt->execute([':id' => $productId]);
     $product = $stmt->fetch();
 
@@ -318,13 +332,13 @@ if (preg_match('#^/api/public/products/(\d+)/reserve$#', $uri, $matches) && $met
         exit;
     }
 
-    if ($product['status'] === 'reservado') {
+    if ($product['estado'] === 'reservado') {
         http_response_code(422);
         echo json_encode(['message' => 'Este producto ya cuenta con una reserva activa.']);
         exit;
     }
 
-    if ($product['status'] === 'vendido') {
+    if ($product['estado'] === 'vendido') {
         http_response_code(422);
         echo json_encode(['message' => 'El producto ya fue vendido.']);
         exit;
@@ -333,11 +347,12 @@ if (preg_match('#^/api/public/products/(\d+)/reserve$#', $uri, $matches) && $met
     // Calcular vigencia exacta de 7 días
     $reservedAt = date('Y-m-d H:i:s');
     $expiresAt  = date('Y-m-d H:i:s', strtotime('+7 days'));
-    $finalAgreed = $agreedPrice ?: (float)$product['sale_price'];
+    $finalAgreed = $agreedPrice ?: (float)$product['precio_venta'];
 
     $pdo->beginTransaction();
     try {
-        $stmt = $pdo->prepare("INSERT INTO reservations (product_id, customer_name, customer_phone, advance_payment, agreed_price, reserved_at, expires_at, status, notes) VALUES (:pid, :name, :phone, :adv, :agreed, :res_at, :exp_at, 'activa', :notes)");
+        $stmt = $pdo->prepare("INSERT INTO reservas (producto_id, nombre_cliente, telefono_cliente, adelanto, precio_pactado, fecha_reserva, fecha_expiracion, estado, notas, fecha_creacion, fecha_actualizacion) 
+                               VALUES (:pid, :name, :phone, :adv, :agreed, :res_at, :exp_at, 'activa', :notes, NOW(), NOW())");
         $stmt->execute([
             ':pid'    => $productId,
             ':name'   => $customerName,
@@ -350,7 +365,7 @@ if (preg_match('#^/api/public/products/(\d+)/reserve$#', $uri, $matches) && $met
         ]);
         $reservationId = $pdo->lastInsertId();
 
-        $stmt = $pdo->prepare("UPDATE products SET status = 'reservado' WHERE id = :pid");
+        $stmt = $pdo->prepare("UPDATE productos SET estado = 'reservado', fecha_actualizacion = NOW() WHERE id = :pid");
         $stmt->execute([':pid' => $productId]);
 
         $pdo->commit();
@@ -391,33 +406,33 @@ if ($uri === '/api/admin/dashboard' && $method === 'GET') {
     $endMonth   = date('Y-m-t 23:59:59');
 
     // 1. Ingresos totales del mes (solo ventas computables)
-    $stmt = $pdo->prepare("SELECT COALESCE(SUM(sale_price), 0) FROM sales_history WHERE include_in_dashboard = 1 AND sold_at BETWEEN :start AND :end");
+    $stmt = $pdo->prepare("SELECT COALESCE(SUM(precio_venta), 0) FROM historial_ventas WHERE incluir_en_dashboard = 1 AND fecha_venta BETWEEN :start AND :end");
     $stmt->execute([':start' => $startMonth, ':end' => $endMonth]);
     $revenueMonth = (float)$stmt->fetchColumn();
 
     // 2. Ganancia neta del mes (Venta - Costo de ventas computables)
-    $stmt = $pdo->prepare("SELECT COALESCE(SUM(net_profit), 0) FROM sales_history WHERE include_in_dashboard = 1 AND sold_at BETWEEN :start AND :end");
+    $stmt = $pdo->prepare("SELECT COALESCE(SUM(ganancia_neta), 0) FROM historial_ventas WHERE incluir_en_dashboard = 1 AND fecha_venta BETWEEN :start AND :end");
     $stmt->execute([':start' => $startMonth, ':end' => $endMonth]);
     $profitMonth = (float)$stmt->fetchColumn();
 
     // 3. Total productos vendidos computables en el mes
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM sales_history WHERE include_in_dashboard = 1 AND sold_at BETWEEN :start AND :end");
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM historial_ventas WHERE incluir_en_dashboard = 1 AND fecha_venta BETWEEN :start AND :end");
     $stmt->execute([':start' => $startMonth, ':end' => $endMonth]);
     $soldMonth = (int)$stmt->fetchColumn();
 
-    $stmt = $pdo->query("SELECT COUNT(*) FROM sales_history WHERE include_in_dashboard = 1");
+    $stmt = $pdo->query("SELECT COUNT(*) FROM historial_ventas WHERE incluir_en_dashboard = 1");
     $soldAllTime = (int)$stmt->fetchColumn();
 
     // 4. Reservas activas (< 7 días)
-    $stmt = $pdo->query("SELECT COUNT(*) FROM reservations WHERE status = 'activa' AND expires_at > NOW()");
+    $stmt = $pdo->query("SELECT COUNT(*) FROM reservas WHERE estado = 'activa' AND fecha_expiracion > NOW()");
     $activeReservations = (int)$stmt->fetchColumn();
 
     // Inventario
     $stmt = $pdo->query("SELECT 
-        COUNT(CASE WHEN status = 'disponible' AND is_active = 1 THEN 1 END) as disponibles,
-        COUNT(CASE WHEN status = 'reservado' THEN 1 END) as reservados,
-        COUNT(CASE WHEN status = 'vendido' THEN 1 END) as vendidos
-        FROM products WHERE deleted_at IS NULL");
+        COUNT(CASE WHEN estado = 'disponible' AND activo = 1 THEN 1 END) as disponibles,
+        COUNT(CASE WHEN estado = 'reservado' THEN 1 END) as reservados,
+        COUNT(CASE WHEN estado = 'vendido' THEN 1 END) as vendidos
+        FROM productos WHERE fecha_eliminacion IS NULL");
     $inv = $stmt->fetch();
 
     // Gráfico de barras mensual (últimos 6 meses, solo ventas computables)
@@ -439,7 +454,7 @@ if ($uri === '/api/admin/dashboard' && $method === 'GET') {
         $mStart = date('Y-m-01 00:00:00', $timestamp);
         $mEnd   = date('Y-m-t 23:59:59', $timestamp);
 
-        $stmt = $pdo->prepare("SELECT COALESCE(SUM(sale_price), 0) as rev, COALESCE(SUM(net_profit), 0) as prof FROM sales_history WHERE include_in_dashboard = 1 AND sold_at BETWEEN :s AND :e");
+        $stmt = $pdo->prepare("SELECT COALESCE(SUM(precio_venta), 0) as rev, COALESCE(SUM(ganancia_neta), 0) as prof FROM historial_ventas WHERE incluir_en_dashboard = 1 AND fecha_venta BETWEEN :s AND :e");
         $stmt->execute([':s' => $mStart, ':e' => $mEnd]);
         $res = $stmt->fetch();
 
@@ -475,22 +490,25 @@ if ($uri === '/api/admin/dashboard' && $method === 'GET') {
 if ($uri === '/api/admin/products' && $method === 'GET') {
     requireAuth($pdo);
 
-    $where = ["p.deleted_at IS NULL"];
+    $where = ["p.fecha_eliminacion IS NULL"];
     $params = [];
 
     if (!empty($_GET['status'])) {
-        $where[] = "p.status = :status";
+        $where[] = "p.estado = :status";
         $params[':status'] = $_GET['status'];
     }
 
     if (!empty($_GET['search'])) {
-        $where[] = "p.name LIKE :search";
+        $where[] = "p.nombre LIKE :search";
         $params[':search'] = '%' . $_GET['search'] . '%';
     }
 
-    $sql = "SELECT p.*, c.name as category_name 
-            FROM products p 
-            LEFT JOIN categories c ON c.id = p.category_id 
+    $sql = "SELECT p.id, p.categoria_id as category_id, p.nombre as name, p.slug, p.descripcion as description, 
+                   p.precio_costo as cost_price, p.precio_venta as sale_price, p.estado as status, 
+                   p.activo as is_active, p.fecha_creacion as created_at, p.fecha_actualizacion as updated_at, 
+                   c.nombre as category_name 
+            FROM productos p 
+            LEFT JOIN categorias c ON c.id = p.categoria_id 
             WHERE " . implode(' AND ', $where) . " ORDER BY p.id DESC";
 
     $stmt = $pdo->prepare($sql);
@@ -527,9 +545,7 @@ if ($uri === '/api/admin/upload-image' && $method === 'POST') {
 
         $newName = 'img_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
         if (move_uploaded_file($tmpName, $uploadsDir . $newName)) {
-            $host = $_SERVER['HTTP_HOST'] ?? '127.0.0.1:8000';
-            $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-            $uploadedUrl = "{$scheme}://{$host}/uploads/{$newName}";
+            $uploadedUrl = "/uploads/{$newName}";
         }
     }
     // 2. Archivo subido vía Base64 JSON
@@ -544,9 +560,7 @@ if ($uri === '/api/admin/upload-image' && $method === 'POST') {
             if ($decoded !== false) {
                 $newName = 'img_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
                 file_put_contents($uploadsDir . $newName, $decoded);
-                $host = $_SERVER['HTTP_HOST'] ?? '127.0.0.1:8000';
-                $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-                $uploadedUrl = "{$scheme}://{$host}/uploads/{$newName}";
+                $uploadedUrl = "/uploads/{$newName}";
             }
         }
     }
@@ -572,11 +586,12 @@ if ($uri === '/api/admin/upload-image' && $method === 'POST') {
 if ($uri === '/api/admin/categories' && $method === 'GET') {
     requireAuth($pdo);
 
-    $sql = "SELECT c.*, COUNT(p.id) as products_count 
-            FROM categories c 
-            LEFT JOIN products p ON p.category_id = c.id AND p.deleted_at IS NULL
+    $sql = "SELECT c.id, c.nombre as name, c.slug, c.descripcion as description, c.activo as is_active, 
+            COUNT(p.id) as products_count 
+            FROM categorias c 
+            LEFT JOIN productos p ON p.categoria_id = c.id AND p.fecha_eliminacion IS NULL
             GROUP BY c.id 
-            ORDER BY c.name ASC";
+            ORDER BY c.nombre ASC";
     $stmt = $pdo->query($sql);
     $categories = $stmt->fetchAll();
     echo json_encode(['data' => $categories]);
@@ -587,8 +602,8 @@ if ($uri === '/api/admin/categories' && $method === 'GET') {
 if ($uri === '/api/admin/categories' && $method === 'POST') {
     requireAuth($pdo);
 
-    $name = trim($body['name'] ?? '');
-    $description = trim($body['description'] ?? '');
+    $name = trim($body['name'] ?? $body['nombre'] ?? '');
+    $description = trim($body['description'] ?? $body['descripcion'] ?? '');
 
     if (empty($name)) {
         http_response_code(422);
@@ -600,7 +615,8 @@ if ($uri === '/api/admin/categories' && $method === 'POST') {
     $slug = $baseSlug . '-' . substr(bin2hex(random_bytes(2)), 0, 4);
 
     try {
-        $stmt = $pdo->prepare("INSERT INTO categories (name, slug, description, is_active, created_at, updated_at) VALUES (:name, :slug, :desc, 1, NOW(), NOW())");
+        $stmt = $pdo->prepare("INSERT INTO categorias (nombre, slug, descripcion, activo, fecha_creacion, fecha_actualizacion) 
+                               VALUES (:name, :slug, :desc, 1, NOW(), NOW())");
         $stmt->execute([
             ':name' => $name,
             ':slug' => $slug,
@@ -631,8 +647,8 @@ if (preg_match('#^/api/admin/categories/(\d+)$#', $uri, $matches) && $method ===
     requireAuth($pdo);
     $catId = (int)$matches[1];
 
-    $name = trim($body['name'] ?? '');
-    $description = trim($body['description'] ?? '');
+    $name = trim($body['name'] ?? $body['nombre'] ?? '');
+    $description = trim($body['description'] ?? $body['descripcion'] ?? '');
 
     if (empty($name)) {
         http_response_code(422);
@@ -641,7 +657,7 @@ if (preg_match('#^/api/admin/categories/(\d+)$#', $uri, $matches) && $method ===
     }
 
     try {
-        $stmt = $pdo->prepare("UPDATE categories SET name = :name, description = :desc, updated_at = NOW() WHERE id = :id");
+        $stmt = $pdo->prepare("UPDATE categorias SET nombre = :name, descripcion = :desc, fecha_actualizacion = NOW() WHERE id = :id");
         $stmt->execute([
             ':name' => $name,
             ':desc' => $description,
@@ -664,11 +680,11 @@ if (preg_match('#^/api/admin/categories/(\d+)$#', $uri, $matches) && $method ===
     $pdo->beginTransaction();
     try {
         // Desvincular productos para no dejarlos huérfanos
-        $stmtProd = $pdo->prepare("UPDATE products SET category_id = NULL WHERE category_id = :id");
+        $stmtProd = $pdo->prepare("UPDATE productos SET categoria_id = NULL WHERE categoria_id = :id");
         $stmtProd->execute([':id' => $catId]);
 
         // Eliminar la categoría
-        $stmtDel = $pdo->prepare("DELETE FROM categories WHERE id = :id");
+        $stmtDel = $pdo->prepare("DELETE FROM categorias WHERE id = :id");
         $stmtDel->execute([':id' => $catId]);
 
         $pdo->commit();
@@ -687,13 +703,15 @@ if (preg_match('#^/api/admin/categories/(\d+)$#', $uri, $matches) && $method ===
 if ($uri === '/api/admin/products' && $method === 'POST') {
     requireAuth($pdo);
 
-    $name = trim($body['name'] ?? '');
-    $categoryId = !empty($body['category_id']) ? (int)$body['category_id'] : null;
-    $description = trim($body['description'] ?? '');
-    $costPrice = (float)($body['cost_price'] ?? 0);
-    $salePrice = (float)($body['sale_price'] ?? 0);
-    $status = in_array($body['status'] ?? '', ['disponible', 'reservado', 'vendido']) ? $body['status'] : 'disponible';
-    $imagesInput = $body['images'] ?? [];
+    $name = trim($body['name'] ?? $body['nombre'] ?? '');
+    $categoryId = !empty($body['category_id']) ? (int)$body['category_id'] : (!empty($body['categoria_id']) ? (int)$body['categoria_id'] : null);
+    $description = trim($body['description'] ?? $body['descripcion'] ?? '');
+    $costPrice = (float)($body['cost_price'] ?? $body['precio_costo'] ?? 0);
+    $salePrice = (float)($body['sale_price'] ?? $body['precio_venta'] ?? 0);
+    $statusInput = $body['status'] ?? $body['estado'] ?? 'disponible';
+    $status = in_array($statusInput, ['disponible', 'reservado', 'vendido']) ? $statusInput : 'disponible';
+    
+    $imagesInput = $body['images'] ?? $body['imagenes'] ?? [];
     if (is_string($imagesInput)) {
         $imagesInput = [$imagesInput];
     }
@@ -709,7 +727,8 @@ if ($uri === '/api/admin/products' && $method === 'POST') {
 
     $pdo->beginTransaction();
     try {
-        $stmt = $pdo->prepare("INSERT INTO products (category_id, name, slug, description, cost_price, sale_price, status, is_active, created_at, updated_at) VALUES (:cat, :name, :slug, :desc, :cost, :sale, :stat, 1, NOW(), NOW())");
+        $stmt = $pdo->prepare("INSERT INTO productos (categoria_id, nombre, slug, descripcion, precio_costo, precio_venta, estado, activo, fecha_creacion, fecha_actualizacion) 
+                               VALUES (:cat, :name, :slug, :desc, :cost, :sale, :stat, 1, NOW(), NOW())");
         $stmt->execute([
             ':cat'  => $categoryId,
             ':name' => $name,
@@ -721,7 +740,8 @@ if ($uri === '/api/admin/products' && $method === 'POST') {
         ]);
         $productId = $pdo->lastInsertId();
 
-        $stmtImg = $pdo->prepare("INSERT INTO product_images (product_id, image_url, sort_order, is_primary) VALUES (:pid, :url, :order, :primary)");
+        $stmtImg = $pdo->prepare("INSERT INTO imagenes_producto (producto_id, url_imagen, orden, es_principal, fecha_creacion, fecha_actualizacion) 
+                                  VALUES (:pid, :url, :order, :primary, NOW(), NOW())");
         foreach (array_values(array_slice($images, 0, 3)) as $idx => $url) {
             $stmtImg->execute([
                 ':pid'     => $productId,
@@ -731,9 +751,10 @@ if ($uri === '/api/admin/products' && $method === 'POST') {
             ]);
         }
 
-        // Si se crea directamente como vendido, registrar en sales_history
+        // Si se crea directamente como vendido, registrar en historial_ventas
         if ($status === 'vendido') {
-            $stmtSale = $pdo->prepare("INSERT INTO sales_history (product_id, product_name, cost_price, sale_price, net_profit, sold_at, notes) VALUES (:pid, :name, :cost, :sale, :prof, NOW(), 'Venta inicial registrada')");
+            $stmtSale = $pdo->prepare("INSERT INTO historial_ventas (producto_id, nombre_producto, precio_costo, precio_venta, ganancia_neta, fecha_venta, notas, fecha_creacion, fecha_actualizacion) 
+                                       VALUES (:pid, :name, :cost, :sale, :prof, NOW(), 'Venta inicial registrada', NOW(), NOW())");
             $stmtSale->execute([
                 ':pid'  => $productId,
                 ':name' => $name,
@@ -758,7 +779,7 @@ if (preg_match('#^/api/admin/products/(\d+)$#', $uri, $matches) && $method === '
     requireAuth($pdo);
     $productId = (int)$matches[1];
 
-    $stmtOld = $pdo->prepare("SELECT * FROM products WHERE id = :id");
+    $stmtOld = $pdo->prepare("SELECT * FROM productos WHERE id = :id");
     $stmtOld->execute([':id' => $productId]);
     $oldProduct = $stmtOld->fetch();
 
@@ -768,12 +789,14 @@ if (preg_match('#^/api/admin/products/(\d+)$#', $uri, $matches) && $method === '
         exit;
     }
 
-    $name = trim($body['name'] ?? $oldProduct['name']);
-    $categoryId = !empty($body['category_id']) ? (int)$body['category_id'] : $oldProduct['category_id'];
-    $description = $body['description'] ?? $oldProduct['description'];
-    $costPrice = isset($body['cost_price']) ? (float)$body['cost_price'] : (float)$oldProduct['cost_price'];
-    $salePrice = isset($body['sale_price']) ? (float)$body['sale_price'] : (float)$oldProduct['sale_price'];
-    $imagesInput = $body['images'] ?? [];
+    $name = trim($body['name'] ?? $body['nombre'] ?? $oldProduct['nombre']);
+    $categoryId = !empty($body['category_id']) ? (int)$body['category_id'] : (!empty($body['categoria_id']) ? (int)$body['categoria_id'] : $oldProduct['categoria_id']);
+    $description = $body['description'] ?? $body['descripcion'] ?? $oldProduct['descripcion'];
+    $costPrice = isset($body['cost_price']) ? (float)$body['cost_price'] : (isset($body['precio_costo']) ? (float)$body['precio_costo'] : (float)$oldProduct['precio_costo']);
+    $salePrice = isset($body['sale_price']) ? (float)$body['sale_price'] : (isset($body['precio_venta']) ? (float)$body['precio_venta'] : (float)$oldProduct['precio_venta']);
+    $newStatus = in_array($body['status'] ?? $body['estado'] ?? '', ['disponible', 'reservado', 'vendido']) ? ($body['status'] ?? $body['estado']) : $oldProduct['estado'];
+
+    $imagesInput = $body['images'] ?? $body['imagenes'] ?? [];
     if (is_string($imagesInput)) {
         $imagesInput = [$imagesInput];
     }
@@ -781,7 +804,9 @@ if (preg_match('#^/api/admin/products/(\d+)$#', $uri, $matches) && $method === '
 
     $pdo->beginTransaction();
     try {
-        $stmt = $pdo->prepare("UPDATE products SET category_id = :cat, name = :name, description = :desc, cost_price = :cost, sale_price = :sale, status = :stat, updated_at = NOW() WHERE id = :id");
+        $stmt = $pdo->prepare("UPDATE productos 
+                               SET categoria_id = :cat, nombre = :name, descripcion = :desc, precio_costo = :cost, precio_venta = :sale, estado = :stat, fecha_actualizacion = NOW() 
+                               WHERE id = :id");
         $stmt->execute([
             ':cat'  => $categoryId,
             ':name' => $name,
@@ -793,8 +818,9 @@ if (preg_match('#^/api/admin/products/(\d+)$#', $uri, $matches) && $method === '
         ]);
 
         if (!empty($images)) {
-            $pdo->prepare("DELETE FROM product_images WHERE product_id = :pid")->execute([':pid' => $productId]);
-            $stmtImg = $pdo->prepare("INSERT INTO product_images (product_id, image_url, sort_order, is_primary) VALUES (:pid, :url, :order, :primary)");
+            $pdo->prepare("DELETE FROM imagenes_producto WHERE producto_id = :pid")->execute([':pid' => $productId]);
+            $stmtImg = $pdo->prepare("INSERT INTO imagenes_producto (producto_id, url_imagen, orden, es_principal, fecha_creacion, fecha_actualizacion) 
+                                      VALUES (:pid, :url, :order, :primary, NOW(), NOW())");
             foreach (array_values(array_slice($images, 0, 3)) as $idx => $url) {
                 $stmtImg->execute([
                     ':pid'     => $productId,
@@ -805,10 +831,11 @@ if (preg_match('#^/api/admin/products/(\d+)$#', $uri, $matches) && $method === '
             }
         }
 
-        // TRIGGER AUTOMÁTICO: Si cambió a vendido, registrar en sales_history
-        if ($oldProduct['status'] !== 'vendido' && $newStatus === 'vendido') {
+        // TRIGGER AUTOMÁTICO: Si cambió a vendido, registrar en historial_ventas
+        if ($oldProduct['estado'] !== 'vendido' && $newStatus === 'vendido') {
             $includeInDashboard = isset($body['include_in_dashboard']) ? ((bool)$body['include_in_dashboard'] ? 1 : 0) : 1;
-            $stmtSale = $pdo->prepare("INSERT INTO sales_history (product_id, product_name, cost_price, original_price, sale_price, discount_amount, advance_payment, net_profit, include_in_dashboard, sold_at, notes) VALUES (:pid, :name, :cost, :orig, :sale, 0.00, 0.00, :prof, :inc, NOW(), 'Venta registrada automáticamente al editar producto a Vendido.')");
+            $stmtSale = $pdo->prepare("INSERT INTO historial_ventas (producto_id, nombre_producto, precio_costo, precio_original, precio_venta, monto_descuento, adelanto, ganancia_neta, incluir_en_dashboard, fecha_venta, notas, fecha_creacion, fecha_actualizacion) 
+                                       VALUES (:pid, :name, :cost, :orig, :sale, 0.00, 0.00, :prof, :inc, NOW(), 'Venta registrada automáticamente al editar producto a Vendido.', NOW(), NOW())");
             $stmtSale->execute([
                 ':pid'  => $productId,
                 ':name' => $name,
@@ -819,7 +846,7 @@ if (preg_match('#^/api/admin/products/(\d+)$#', $uri, $matches) && $method === '
                 ':inc'  => $includeInDashboard,
             ]);
 
-            $pdo->prepare("UPDATE reservations SET status = 'completada' WHERE product_id = :pid AND status = 'activa'")->execute([':pid' => $productId]);
+            $pdo->prepare("UPDATE reservas SET estado = 'completada', fecha_actualizacion = NOW() WHERE producto_id = :pid AND estado = 'activa'")->execute([':pid' => $productId]);
         }
 
         $pdo->commit();
@@ -836,7 +863,7 @@ if (preg_match('#^/api/admin/products/(\d+)$#', $uri, $matches) && $method === '
 if (preg_match('#^/api/admin/products/(\d+)/status$#', $uri, $matches) && $method === 'PATCH') {
     requireAuth($pdo);
     $productId = (int)$matches[1];
-    $newStatus = $body['status'] ?? '';
+    $newStatus = $body['status'] ?? $body['estado'] ?? '';
 
     if (!in_array($newStatus, ['disponible', 'reservado', 'vendido'])) {
         http_response_code(422);
@@ -844,7 +871,7 @@ if (preg_match('#^/api/admin/products/(\d+)/status$#', $uri, $matches) && $metho
         exit;
     }
 
-    $stmtOld = $pdo->prepare("SELECT * FROM products WHERE id = :id");
+    $stmtOld = $pdo->prepare("SELECT * FROM productos WHERE id = :id");
     $stmtOld->execute([':id' => $productId]);
     $product = $stmtOld->fetch();
 
@@ -854,11 +881,11 @@ if (preg_match('#^/api/admin/products/(\d+)/status$#', $uri, $matches) && $metho
         exit;
     }
 
-    $pdo->prepare("UPDATE products SET status = :status WHERE id = :id")->execute([':status' => $newStatus, ':id' => $productId]);
+    $pdo->prepare("UPDATE productos SET estado = :status, fecha_actualizacion = NOW() WHERE id = :id")->execute([':status' => $newStatus, ':id' => $productId]);
 
-    if ($product['status'] !== 'vendido' && $newStatus === 'vendido') {
-        $cost = (float)$product['cost_price'];
-        $orig = (float)$product['sale_price'];
+    if ($product['estado'] !== 'vendido' && $newStatus === 'vendido') {
+        $cost = (float)$product['precio_costo'];
+        $orig = (float)$product['precio_venta'];
         $sale = isset($body['final_sale_price']) && (float)$body['final_sale_price'] > 0
             ? (float)$body['final_sale_price']
             : $orig;
@@ -869,13 +896,14 @@ if (preg_match('#^/api/admin/products/(\d+)/status$#', $uri, $matches) && $metho
         $includeInDashboard = isset($body['include_in_dashboard']) ? ((bool)$body['include_in_dashboard'] ? 1 : 0) : 1;
 
         if (!empty($body['update_catalog_price'])) {
-            $pdo->prepare("UPDATE products SET sale_price = :sp WHERE id = :id")->execute([':sp' => $sale, ':id' => $productId]);
+            $pdo->prepare("UPDATE productos SET precio_venta = :sp, fecha_actualizacion = NOW() WHERE id = :id")->execute([':sp' => $sale, ':id' => $productId]);
         }
 
-        $stmtSale = $pdo->prepare("INSERT INTO sales_history (product_id, product_name, cost_price, original_price, sale_price, discount_amount, advance_payment, net_profit, include_in_dashboard, customer_name, sold_at, notes) VALUES (:pid, :name, :cost, :orig, :sale, :disc, 0.00, :prof, :inc, :cust, NOW(), :notes)");
+        $stmtSale = $pdo->prepare("INSERT INTO historial_ventas (producto_id, nombre_producto, precio_costo, precio_original, precio_venta, monto_descuento, adelanto, ganancia_neta, incluir_en_dashboard, nombre_cliente, fecha_venta, notas, fecha_creacion, fecha_actualizacion) 
+                                   VALUES (:pid, :name, :cost, :orig, :sale, :disc, 0.00, :prof, :inc, :cust, NOW(), :notes, NOW(), NOW())");
         $stmtSale->execute([
             ':pid'  => $productId,
-            ':name' => $product['name'],
+            ':name' => $product['nombre'],
             ':cost' => $cost,
             ':orig' => $orig,
             ':sale' => $sale,
@@ -885,7 +913,7 @@ if (preg_match('#^/api/admin/products/(\d+)/status$#', $uri, $matches) && $metho
             ':cust' => !empty($cust) ? $cust : null,
             ':notes'=> $notes,
         ]);
-        $pdo->prepare("UPDATE reservations SET status = 'completada' WHERE product_id = :pid AND status = 'activa'")->execute([':pid' => $productId]);
+        $pdo->prepare("UPDATE reservas SET estado = 'completada', fecha_actualizacion = NOW() WHERE producto_id = :pid AND estado = 'activa'")->execute([':pid' => $productId]);
     }
 
     echo json_encode(['message' => 'Estado actualizado.', 'status' => $newStatus]);
@@ -896,7 +924,7 @@ if (preg_match('#^/api/admin/products/(\d+)/status$#', $uri, $matches) && $metho
 if (preg_match('#^/api/admin/products/(\d+)$#', $uri, $matches) && $method === 'DELETE') {
     requireAuth($pdo);
     $productId = (int)$matches[1];
-    $pdo->prepare("UPDATE products SET deleted_at = NOW() WHERE id = :id")->execute([':id' => $productId]);
+    $pdo->prepare("UPDATE productos SET fecha_eliminacion = NOW() WHERE id = :id")->execute([':id' => $productId]);
     echo json_encode(['message' => 'Producto eliminado correctamente.']);
     exit;
 }
@@ -909,20 +937,22 @@ if ($uri === '/api/admin/reservations' && $method === 'GET') {
     $params = [];
 
     if (!empty($_GET['status'])) {
-        $where[] = "r.status = :status";
+        $where[] = "r.estado = :status";
         $params[':status'] = $_GET['status'];
     }
 
     if (!empty($_GET['search'])) {
-        $where[] = "(r.customer_name LIKE :s OR r.customer_phone LIKE :s OR p.name LIKE :s)";
+        $where[] = "(r.nombre_cliente LIKE :s OR r.telefono_cliente LIKE :s OR p.nombre LIKE :s)";
         $params[':s'] = '%' . $_GET['search'] . '%';
     }
 
-    $sql = "SELECT r.*, p.name as product_name, p.sale_price as product_price, p.status as product_status,
-            (SELECT image_url FROM product_images WHERE product_id = p.id ORDER BY is_primary DESC, sort_order ASC LIMIT 1) as primary_image
-            FROM reservations r
-            INNER JOIN products p ON p.id = r.product_id
-            WHERE " . implode(' AND ', $where) . " ORDER BY r.reserved_at DESC";
+    $sql = "SELECT r.id, r.producto_id, r.nombre_cliente, r.telefono_cliente, r.adelanto, r.precio_pactado, 
+                   r.fecha_reserva, r.fecha_expiracion, r.estado, r.notas,
+                   p.nombre as product_name, p.precio_venta as product_price, p.estado as product_status,
+                   (SELECT url_imagen FROM imagenes_producto WHERE producto_id = p.id ORDER BY es_principal DESC, orden ASC LIMIT 1) as primary_image
+            FROM reservas r
+            INNER JOIN productos p ON p.id = r.producto_id
+            WHERE " . implode(' AND ', $where) . " ORDER BY r.fecha_reserva DESC";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -930,29 +960,29 @@ if ($uri === '/api/admin/reservations' && $method === 'GET') {
 
     $now = time();
     $data = array_map(function ($r) use ($now) {
-        $expiresTs = strtotime($r['expires_at']);
+        $expiresTs = strtotime($r['fecha_expiracion']);
         $diffDays = max(0, (int)ceil(($expiresTs - $now) / 86400));
         $prodPrice = (float)$r['product_price'];
-        $advance = (float)($r['advance_payment'] ?? 0);
-        $agreed = !empty($r['agreed_price']) && (float)$r['agreed_price'] > 0 ? (float)$r['agreed_price'] : $prodPrice;
+        $advance = (float)($r['adelanto'] ?? 0);
+        $agreed = !empty($r['precio_pactado']) && (float)$r['precio_pactado'] > 0 ? (float)$r['precio_pactado'] : $prodPrice;
         $pending = max(0, $agreed - $advance);
 
         return [
             'id'              => (int)$r['id'],
-            'product_id'      => (int)$r['product_id'],
-            'customer_name'   => $r['customer_name'],
-            'customer_phone'  => $r['customer_phone'],
+            'product_id'      => (int)$r['producto_id'],
+            'customer_name'   => $r['nombre_cliente'],
+            'customer_phone'  => $r['telefono_cliente'],
             'advance_payment' => $advance,
             'agreed_price'    => $agreed,
             'pending_balance' => $pending,
-            'reserved_at'     => $r['reserved_at'],
-            'expires_at'      => $r['expires_at'],
-            'status'          => $r['status'],
+            'reserved_at'     => $r['fecha_reserva'],
+            'expires_at'      => $r['fecha_expiracion'],
+            'status'          => $r['estado'],
             'is_expired'      => ($expiresTs <= $now),
             'days_remaining'  => $diffDays,
-            'notes'           => $r['notes'],
+            'notes'           => $r['notas'],
             'product'         => [
-                'id'            => (int)$r['product_id'],
+                'id'            => (int)$r['producto_id'],
                 'name'          => $r['product_name'],
                 'sale_price'    => $prodPrice,
                 'status'        => $r['product_status'],
@@ -965,15 +995,15 @@ if ($uri === '/api/admin/reservations' && $method === 'GET') {
     exit;
 }
 
-// Crear reserva manual por el administrador (con monto de reserva y precio acordado)
+// Crear reserva manual por el administrador
 if ($uri === '/api/admin/reservations' && $method === 'POST') {
     requireAuth($pdo);
-    $productId = (int)($body['product_id'] ?? 0);
-    $customerName = trim($body['customer_name'] ?? '');
-    $customerPhone = trim($body['customer_phone'] ?? '');
-    $advancePayment = max(0, (float)($body['advance_payment'] ?? 0));
-    $agreedPrice = isset($body['agreed_price']) && (float)$body['agreed_price'] > 0 ? (float)$body['agreed_price'] : null;
-    $notes = trim($body['notes'] ?? 'Reserva registrada manualmente por administrador');
+    $productId = (int)($body['product_id'] ?? $body['producto_id'] ?? 0);
+    $customerName = trim($body['customer_name'] ?? $body['nombre_cliente'] ?? '');
+    $customerPhone = trim($body['customer_phone'] ?? $body['telefono_cliente'] ?? '');
+    $advancePayment = max(0, (float)($body['advance_payment'] ?? $body['adelanto'] ?? 0));
+    $agreedPrice = isset($body['agreed_price']) && (float)$body['agreed_price'] > 0 ? (float)$body['agreed_price'] : (isset($body['precio_pactado']) && (float)$body['precio_pactado'] > 0 ? (float)$body['precio_pactado'] : null);
+    $notes = trim($body['notes'] ?? $body['notas'] ?? 'Reserva registrada manualmente por administrador');
 
     if (empty($customerName) || $productId <= 0) {
         http_response_code(422);
@@ -981,7 +1011,7 @@ if ($uri === '/api/admin/reservations' && $method === 'POST') {
         exit;
     }
 
-    $stmt = $pdo->prepare("SELECT * FROM products WHERE id = :id AND deleted_at IS NULL LIMIT 1");
+    $stmt = $pdo->prepare("SELECT * FROM productos WHERE id = :id AND fecha_eliminacion IS NULL LIMIT 1");
     $stmt->execute([':id' => $productId]);
     $product = $stmt->fetch();
 
@@ -991,7 +1021,7 @@ if ($uri === '/api/admin/reservations' && $method === 'POST') {
         exit;
     }
 
-    if ($product['status'] === 'vendido') {
+    if ($product['estado'] === 'vendido') {
         http_response_code(422);
         echo json_encode(['message' => 'El producto ya está marcado como vendido.']);
         exit;
@@ -1000,11 +1030,12 @@ if ($uri === '/api/admin/reservations' && $method === 'POST') {
     $reservedAt = date('Y-m-d H:i:s');
     $expiresDays = max(1, (int)($body['expires_days'] ?? 7));
     $expiresAt = date('Y-m-d H:i:s', strtotime("+{$expiresDays} days"));
-    $finalAgreed = $agreedPrice ?: (float)$product['sale_price'];
+    $finalAgreed = $agreedPrice ?: (float)$product['precio_venta'];
 
     $pdo->beginTransaction();
     try {
-        $stmt = $pdo->prepare("INSERT INTO reservations (product_id, customer_name, customer_phone, advance_payment, agreed_price, reserved_at, expires_at, status, notes) VALUES (:pid, :name, :phone, :adv, :agreed, :res_at, :exp_at, 'activa', :notes)");
+        $stmt = $pdo->prepare("INSERT INTO reservas (producto_id, nombre_cliente, telefono_cliente, adelanto, precio_pactado, fecha_reserva, fecha_expiracion, estado, notas, fecha_creacion, fecha_actualizacion) 
+                               VALUES (:pid, :name, :phone, :adv, :agreed, :res_at, :exp_at, 'activa', :notes, NOW(), NOW())");
         $stmt->execute([
             ':pid'    => $productId,
             ':name'   => $customerName,
@@ -1017,7 +1048,7 @@ if ($uri === '/api/admin/reservations' && $method === 'POST') {
         ]);
         $resId = (int)$pdo->lastInsertId();
 
-        $pdo->prepare("UPDATE products SET status = 'reservado' WHERE id = :pid")->execute([':pid' => $productId]);
+        $pdo->prepare("UPDATE productos SET estado = 'reservado', fecha_actualizacion = NOW() WHERE id = :pid")->execute([':pid' => $productId]);
         $pdo->commit();
 
         echo json_encode([
@@ -1035,12 +1066,12 @@ if ($uri === '/api/admin/reservations' && $method === 'POST') {
     exit;
 }
 
-// Modificar datos / monto de reserva / precio acordado de una reserva
+// Modificar datos de una reserva
 if (preg_match('#^/api/admin/reservations/(\d+)$#', $uri, $matches) && $method === 'PUT') {
     requireAuth($pdo);
     $resId = (int)$matches[1];
 
-    $stmt = $pdo->prepare("SELECT * FROM reservations WHERE id = :id");
+    $stmt = $pdo->prepare("SELECT * FROM reservas WHERE id = :id");
     $stmt->execute([':id' => $resId]);
     $res = $stmt->fetch();
 
@@ -1054,29 +1085,48 @@ if (preg_match('#^/api/admin/reservations/(\d+)$#', $uri, $matches) && $method =
     $params = [':id' => $resId];
 
     if (isset($body['customer_name']) && trim($body['customer_name']) !== '') {
-        $updFields[] = "customer_name = :cname";
+        $updFields[] = "nombre_cliente = :cname";
         $params[':cname'] = trim($body['customer_name']);
+    } elseif (isset($body['nombre_cliente']) && trim($body['nombre_cliente']) !== '') {
+        $updFields[] = "nombre_cliente = :cname";
+        $params[':cname'] = trim($body['nombre_cliente']);
     }
+
     if (isset($body['customer_phone'])) {
-        $updFields[] = "customer_phone = :cphone";
+        $updFields[] = "telefono_cliente = :cphone";
         $params[':cphone'] = trim($body['customer_phone']);
+    } elseif (isset($body['telefono_cliente'])) {
+        $updFields[] = "telefono_cliente = :cphone";
+        $params[':cphone'] = trim($body['telefono_cliente']);
     }
+
     if (isset($body['advance_payment'])) {
-        $updFields[] = "advance_payment = :adv";
+        $updFields[] = "adelanto = :adv";
         $params[':adv'] = max(0, (float)$body['advance_payment']);
+    } elseif (isset($body['adelanto'])) {
+        $updFields[] = "adelanto = :adv";
+        $params[':adv'] = max(0, (float)$body['adelanto']);
     }
+
     if (isset($body['agreed_price'])) {
-        $updFields[] = "agreed_price = :agreed";
+        $updFields[] = "precio_pactado = :agreed";
         $params[':agreed'] = max(0, (float)$body['agreed_price']);
+    } elseif (isset($body['precio_pactado'])) {
+        $updFields[] = "precio_pactado = :agreed";
+        $params[':agreed'] = max(0, (float)$body['precio_pactado']);
     }
+
     if (isset($body['notes'])) {
-        $updFields[] = "notes = :notes";
+        $updFields[] = "notas = :notes";
         $params[':notes'] = trim($body['notes']);
+    } elseif (isset($body['notas'])) {
+        $updFields[] = "notas = :notes";
+        $params[':notes'] = trim($body['notas']);
     }
 
     if (!empty($updFields)) {
-        $updFields[] = "updated_at = NOW()";
-        $sql = "UPDATE reservations SET " . implode(', ', $updFields) . " WHERE id = :id";
+        $updFields[] = "fecha_actualizacion = NOW()";
+        $sql = "UPDATE reservas SET " . implode(', ', $updFields) . " WHERE id = :id";
         $pdo->prepare($sql)->execute($params);
     }
 
@@ -1089,14 +1139,14 @@ if (preg_match('#^/api/admin/reservations/(\d+)/cancel$#', $uri, $matches) && $m
     requireAuth($pdo);
     $resId = (int)$matches[1];
 
-    $stmt = $pdo->prepare("SELECT * FROM reservations WHERE id = :id");
+    $stmt = $pdo->prepare("SELECT * FROM reservas WHERE id = :id");
     $stmt->execute([':id' => $resId]);
     $res = $stmt->fetch();
 
     if ($res) {
         $pdo->beginTransaction();
-        $pdo->prepare("UPDATE reservations SET status = 'cancelada' WHERE id = :id")->execute([':id' => $resId]);
-        $pdo->prepare("UPDATE products SET status = 'disponible' WHERE id = :pid AND status = 'reservado'")->execute([':pid' => $res['product_id']]);
+        $pdo->prepare("UPDATE reservas SET estado = 'cancelada', fecha_actualizacion = NOW() WHERE id = :id")->execute([':id' => $resId]);
+        $pdo->prepare("UPDATE productos SET estado = 'disponible', fecha_actualizacion = NOW() WHERE id = :pid AND estado = 'reservado'")->execute([':pid' => $res['producto_id']]);
         $pdo->commit();
     }
 
@@ -1109,7 +1159,11 @@ if (preg_match('#^/api/admin/reservations/(\d+)/complete$#', $uri, $matches) && 
     requireAuth($pdo);
     $resId = (int)$matches[1];
 
-    $stmt = $pdo->prepare("SELECT r.*, p.cost_price, p.sale_price, p.name as product_name FROM reservations r INNER JOIN products p ON p.id = r.product_id WHERE r.id = :id");
+    $stmt = $pdo->prepare("SELECT r.id, r.producto_id, r.nombre_cliente, r.telefono_cliente, r.adelanto, r.precio_pactado, 
+                                  p.precio_costo, p.precio_venta, p.nombre as product_name 
+                           FROM reservas r 
+                           INNER JOIN productos p ON p.id = r.producto_id 
+                           WHERE r.id = :id");
     $stmt->execute([':id' => $resId]);
     $res = $stmt->fetch();
 
@@ -1121,49 +1175,48 @@ if (preg_match('#^/api/admin/reservations/(\d+)/complete$#', $uri, $matches) && 
 
     $pdo->beginTransaction();
     try {
-        $cost = (float)$res['cost_price'];
-        $catalogPrice = (float)$res['sale_price'];
-        $advancePayment = (float)$res['advance_payment'];
+        $cost = (float)$res['precio_costo'];
+        $catalogPrice = (float)$res['precio_venta'];
+        $advancePayment = (float)$res['adelanto'];
 
-        // Precio final cerrado acordado con el cliente (con rebaja si corresponde)
         $finalSalePrice = isset($body['final_sale_price']) && (float)$body['final_sale_price'] > 0
             ? (float)$body['final_sale_price']
-            : (!empty($res['agreed_price']) && (float)$res['agreed_price'] > 0 ? (float)$res['agreed_price'] : $catalogPrice);
+            : (!empty($res['precio_pactado']) && (float)$res['precio_pactado'] > 0 ? (float)$res['precio_pactado'] : $catalogPrice);
 
         $discountAmount = max(0, $catalogPrice - $finalSalePrice);
         $netProfit = $finalSalePrice - $cost;
 
-        $customNotes = trim($body['notes'] ?? '');
+        $customNotes = trim($body['notes'] ?? $body['notas'] ?? '');
         $defaultNotes = $discountAmount > 0
             ? "Venta completada desde reserva con rebaja de Bs " . number_format($discountAmount, 2) . " (Adelanto recibido: Bs " . number_format($advancePayment, 2) . ")"
             : "Venta completada desde reserva (Adelanto recibido: Bs " . number_format($advancePayment, 2) . ")";
         $notes = !empty($customNotes) ? $customNotes : $defaultNotes;
 
         // 1. Marcar reserva como completada y guardar precio final pactado
-        $pdo->prepare("UPDATE reservations SET status = 'completada', agreed_price = :agreed, updated_at = NOW() WHERE id = :id")->execute([
+        $pdo->prepare("UPDATE reservas SET estado = 'completada', precio_pactado = :agreed, fecha_actualizacion = NOW() WHERE id = :id")->execute([
             ':agreed' => $finalSalePrice,
             ':id'     => $resId,
         ]);
 
         // 2. Marcar producto como vendido
-        $pdo->prepare("UPDATE products SET status = 'vendido' WHERE id = :pid")->execute([':pid' => $res['product_id']]);
+        $pdo->prepare("UPDATE productos SET estado = 'vendido', fecha_actualizacion = NOW() WHERE id = :pid")->execute([':pid' => $res['producto_id']]);
 
         // Si el admin solicitó actualizar el precio de venta en catálogo
         if (!empty($body['update_catalog_price'])) {
-            $pdo->prepare("UPDATE products SET sale_price = :sp WHERE id = :pid")->execute([
+            $pdo->prepare("UPDATE productos SET precio_venta = :sp, fecha_actualizacion = NOW() WHERE id = :pid")->execute([
                 ':sp'  => $finalSalePrice,
-                ':pid' => $res['product_id'],
+                ':pid' => $res['producto_id'],
             ]);
         }
 
-        // 3. Registrar venta en sales_history con el precio final cerrado y ganancia neta real
+        // 3. Registrar venta en historial_ventas
         $includeInDashboard = isset($body['include_in_dashboard']) ? ((bool)$body['include_in_dashboard'] ? 1 : 0) : 1;
 
-        $stmtSale = $pdo->prepare("INSERT INTO sales_history 
-            (product_id, product_name, cost_price, original_price, sale_price, discount_amount, advance_payment, net_profit, include_in_dashboard, customer_name, sold_at, notes) 
-            VALUES (:pid, :name, :cost, :orig, :sale, :disc, :adv, :prof, :inc, :cust, NOW(), :notes)");
+        $stmtSale = $pdo->prepare("INSERT INTO historial_ventas 
+            (producto_id, nombre_producto, precio_costo, precio_original, precio_venta, monto_descuento, adelanto, ganancia_neta, incluir_en_dashboard, nombre_cliente, fecha_venta, notas, fecha_creacion, fecha_actualizacion) 
+            VALUES (:pid, :name, :cost, :orig, :sale, :disc, :adv, :prof, :inc, :cust, NOW(), :notes, NOW(), NOW())");
         $stmtSale->execute([
-            ':pid'  => $res['product_id'],
+            ':pid'  => $res['producto_id'],
             ':name' => $res['product_name'],
             ':cost' => $cost,
             ':orig' => $catalogPrice,
@@ -1172,7 +1225,7 @@ if (preg_match('#^/api/admin/reservations/(\d+)/complete$#', $uri, $matches) && 
             ':adv'  => $advancePayment,
             ':prof' => $netProfit,
             ':inc'  => $includeInDashboard,
-            ':cust' => $res['customer_name'],
+            ':cust' => $res['nombre_cliente'],
             ':notes'=> $notes,
         ]);
 
@@ -1200,7 +1253,7 @@ if (preg_match('#^/api/admin/sales-history/(\d+)/toggle-metrics$#', $uri, $match
     requireAuth($pdo);
     $saleId = (int)$matches[1];
 
-    $stmt = $pdo->prepare("SELECT id, include_in_dashboard FROM sales_history WHERE id = :id");
+    $stmt = $pdo->prepare("SELECT id, incluir_en_dashboard FROM historial_ventas WHERE id = :id");
     $stmt->execute([':id' => $saleId]);
     $sale = $stmt->fetch();
 
@@ -1210,12 +1263,12 @@ if (preg_match('#^/api/admin/sales-history/(\d+)/toggle-metrics$#', $uri, $match
         exit;
     }
 
-    $currentVal = (int)($sale['include_in_dashboard'] ?? 1);
+    $currentVal = (int)($sale['incluir_en_dashboard'] ?? 1);
     $newVal = isset($body['include_in_dashboard'])
         ? ((bool)$body['include_in_dashboard'] ? 1 : 0)
         : ($currentVal === 1 ? 0 : 1);
 
-    $pdo->prepare("UPDATE sales_history SET include_in_dashboard = :inc WHERE id = :id")->execute([
+    $pdo->prepare("UPDATE historial_ventas SET incluir_en_dashboard = :inc, fecha_actualizacion = NOW() WHERE id = :id")->execute([
         ':inc' => $newVal,
         ':id'  => $saleId,
     ]);
@@ -1228,7 +1281,7 @@ if (preg_match('#^/api/admin/sales-history/(\d+)/toggle-metrics$#', $uri, $match
     exit;
 }
 
-// Historial Contable de Ventas (con soporte de precio original, rebaja, adelanto e inclusión en dashboard)
+// Historial Contable de Ventas
 if ($uri === '/api/admin/sales-history' && $method === 'GET') {
     requireAuth($pdo);
 
@@ -1236,17 +1289,24 @@ if ($uri === '/api/admin/sales-history' && $method === 'GET') {
     $params = [];
 
     if (!empty($_GET['search'])) {
-        $where[] = "(product_name LIKE :s OR customer_name LIKE :s)";
+        $where[] = "(nombre_producto LIKE :s OR nombre_cliente LIKE :s)";
         $params[':s'] = '%' . $_GET['search'] . '%';
     }
 
     if (!empty($_GET['start_date']) && !empty($_GET['end_date'])) {
-        $where[] = "sold_at BETWEEN :start AND :end";
+        $where[] = "fecha_venta BETWEEN :start AND :end";
         $params[':start'] = $_GET['start_date'] . ' 00:00:00';
         $params[':end']   = $_GET['end_date'] . ' 23:59:59';
     }
 
-    $sql = "SELECT * FROM sales_history WHERE " . implode(' AND ', $where) . " ORDER BY sold_at DESC";
+    $sql = "SELECT id, producto_id as product_id, nombre_producto as product_name, 
+                   precio_costo as cost_price, precio_original as original_price, 
+                   precio_venta as sale_price, monto_descuento as discount_amount, 
+                   adelanto as advance_payment, ganancia_neta as net_profit, 
+                   incluir_en_dashboard as include_in_dashboard, nombre_cliente as customer_name, 
+                   fecha_venta as sold_at, notas as notes 
+            FROM historial_ventas 
+            WHERE " . implode(' AND ', $where) . " ORDER BY fecha_venta DESC";
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $sales = $stmt->fetchAll();

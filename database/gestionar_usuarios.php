@@ -20,9 +20,9 @@ $action = $argv[1] ?? 'listar';
 
 if ($action === 'listar') {
     echo "\n=== USUARIOS ADMINISTRADORES REGISTRADOS ===\n";
-    $users = $pdo->query("SELECT id, name, email, role, created_at FROM users")->fetchAll();
+    $users = $pdo->query("SELECT id, nombre, correo, rol, fecha_creacion FROM usuarios")->fetchAll();
     foreach ($users as $u) {
-        echo "ID: {$u['id']} | Nombre: {$u['name']} | Correo: {$u['email']} | Rol: {$u['role']}\n";
+        echo "ID: {$u['id']} | Nombre: {$u['nombre']} | Correo: {$u['correo']} | Rol: {$u['rol']}\n";
     }
     echo "============================================\n\n";
     exit;
@@ -38,7 +38,7 @@ if ($action === 'agregar') {
     }
 
     $hash = password_hash($password, PASSWORD_BCRYPT);
-    $stmt = $pdo->prepare("INSERT INTO users (name, email, password, role, created_at, updated_at) VALUES (:name, :email, :pass, 'admin', NOW(), NOW())");
+    $stmt = $pdo->prepare("INSERT INTO usuarios (nombre, correo, contrasena, rol, fecha_creacion, fecha_actualizacion) VALUES (:name, :email, :pass, 'admin', NOW(), NOW())");
     try {
         $stmt->execute([':name' => $name, ':email' => $email, ':pass' => $hash]);
         echo "¡Administrador '{$name}' ({$email}) creado exitosamente!\n";
@@ -57,7 +57,7 @@ if ($action === 'cambiar-clave') {
     }
 
     $hash = password_hash($password, PASSWORD_BCRYPT);
-    $stmt = $pdo->prepare("UPDATE users SET password = :pass, updated_at = NOW() WHERE email = :email");
+    $stmt = $pdo->prepare("UPDATE usuarios SET contrasena = :pass, fecha_actualizacion = NOW() WHERE correo = :email");
     $stmt->execute([':pass' => $hash, ':email' => $email]);
 
     if ($stmt->rowCount() > 0) {

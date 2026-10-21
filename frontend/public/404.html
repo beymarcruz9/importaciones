@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Redireccionando...</title>
+  <script>
+    // Soporte de redundancia para Single Page Apps en GitHub Pages
+    var l = window.location;
+    var repoName = l.pathname.split('/')[1] || '';
+    var subPath = l.pathname.split('/').slice(2).join('/');
+    var target = l.origin + (repoName ? '/' + repoName : '') + '/#/' + subPath + l.search + l.hash;
+    window.location.replace(target);
+  </script>
+</head>
+<body>
+  Redirigiendo a Importadora de productos...
+</body>
+</html>

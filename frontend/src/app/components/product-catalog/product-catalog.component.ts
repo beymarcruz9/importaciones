@@ -293,7 +293,7 @@ export class ProductCatalogComponent implements OnInit {
   products: Product[] = [];
   categories: Category[] = [];
   loading = true;
-  selectedCategoryId: number | null = null;
+  selectedCategoryId: number | string | null = null;
   searchFilter = '';
 
   // Modales
@@ -333,7 +333,7 @@ export class ProductCatalogComponent implements OnInit {
       });
   }
 
-  selectCategory(id: number | null): void {
+  selectCategory(id: number | string | null): void {
     this.selectedCategoryId = id;
     this.loadProducts();
   }

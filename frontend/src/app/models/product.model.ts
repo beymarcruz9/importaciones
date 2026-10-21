@@ -2,7 +2,7 @@ export type ProductStatus = 'disponible' | 'reservado' | 'vendido';
 export type ReservationStatus = 'activa' | 'completada' | 'expirada' | 'cancelada';
 
 export interface Category {
-  id: number;
+  id: number | string;
   name: string;
   slug: string;
   description?: string;
@@ -11,16 +11,16 @@ export interface Category {
 }
 
 export interface ProductImage {
-  id?: number;
-  product_id?: number;
+  id?: number | string;
+  product_id?: number | string;
   image_url: string;
   is_primary: boolean;
   sort_order: number;
 }
 
 export interface Product {
-  id: number;
-  category_id?: number;
+  id: number | string;
+  category_id?: number | string;
   category?: Category;
   name: string;
   slug: string;
@@ -39,8 +39,8 @@ export interface Product {
 }
 
 export interface Reservation {
-  id: number;
-  product_id: number;
+  id: number | string;
+  product_id: number | string;
   customer_name: string;
   customer_phone?: string;
   advance_payment: number; // Monto con el que reserva en Bs
@@ -53,7 +53,7 @@ export interface Reservation {
   days_remaining?: number;
   notes?: string;
   product?: {
-    id: number;
+    id: number | string;
     name: string;
     sale_price: number;
     status: ProductStatus;
@@ -62,8 +62,8 @@ export interface Reservation {
 }
 
 export interface SaleHistory {
-  id: number;
-  product_id: number;
+  id: number | string;
+  product_id: number | string;
   product_name: string;
   cost_price: number;
   original_price?: number; // Precio de lista antes de la rebaja

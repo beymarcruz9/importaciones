@@ -1,28 +1,25 @@
 @echo off
-title Importadora de productos - Sistema
+title Importadora de productos - Frontend Serverless
 color 0A
 echo ========================================================
 echo    INICIANDO SISTEMA: IMPORTADORA DE PRODUCTOS
+echo    Arquitectura: Angular 19 + Google Cloud Firebase
+echo    100%% Serverless - Sin necesidad de MySQL ni PHP
 echo ========================================================
 echo.
 
 cd /d "%~dp0"
-
-echo [1/2] Iniciando Servidor Backend (PHP en puerto 8000)...
-start "Backend API - Puerto 8000" php -S 0.0.0.0:8000 backend/server.php
-
-timeout /t 2 /nobreak >nul
-
-echo [2/2] Iniciando Servidor Frontend (Angular en puerto 4200)...
 cd frontend
+
+echo Iniciando Servidor Frontend (Angular en puerto 4200)...
 start "Frontend Web - Puerto 4200" npm start
 
 echo.
 echo ========================================================
 echo  Sistema iniciado correctamente:
-echo   - Frontend: http://localhost:4200
-echo   - Backend:  http://127.0.0.1:8000
-echo   - Login:    admin@importadora.com / password123
+echo   - Catalogo Clientes: http://localhost:4200/
+echo   - Panel Admin:       http://localhost:4200/#/admin/login
+echo   - Admin autorizado:  cruz.arias.beymar@itsecsucre.edu.bo
 echo ========================================================
 echo.
 pause

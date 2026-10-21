@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Función de seguridad: Verifica si el usuario autenticado es el administrador oficial
+    function isAdmin() {
+      return request.auth != null && 
+        request.auth.token.email.lower() == 'cruz.arias.beymar@itsecsucre.edu.bo';
+    }
+
+    // 1. CATEGORÍAS: Lectura pública, escritura solo administrador
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 2. PRODUCTOS: Catálogo público, escritura total administrador, reserva pública controlada
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+      // Permite al cliente desde el modal WhatsApp cambiar de 'disponible' a 'reservado'
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'active_reservation', 'updated_at'])
+                   && request.resource.data.status == 'reservado'
+                   && resource.data.status == 'disponible';
+    }
+
+    // 3. RESERVAS: Creación pública, gestión administrativa
+    match /reservations/{reservationId} {
+      allow read: if true;
+      allow create: if request.resource.data.status == 'activa';
+      allow update, delete: if isAdmin();
+    }
+
+    // 4. HISTORIAL DE VENTAS Y CONTABILIDAD: Confidencialidad total (solo administrador)
+    match /sales_history/{saleId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

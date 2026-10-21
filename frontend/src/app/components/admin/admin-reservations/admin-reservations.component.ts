@@ -612,7 +612,7 @@ export class AdminReservationsComponent implements OnInit {
   isCreateModalOpen = false;
   savingReservation = false;
   newReservation = {
-    product_id: null as number | null,
+    product_id: null as number | string | null,
     customer_name: '',
     customer_phone: '',
     advance_payment: 0,
@@ -729,9 +729,9 @@ export class AdminReservationsComponent implements OnInit {
     this.isCreateModalOpen = true;
   }
 
-  onProductSelected(productId: number | null): void {
+  onProductSelected(productId: number | string | null): void {
     if (!productId) return;
-    const prod = this.availableProducts.find((p) => p.id === productId);
+    const prod = this.availableProducts.find((p) => String(p.id) === String(productId));
     if (prod) {
       this.newReservation.agreed_price = prod.sale_price;
     }

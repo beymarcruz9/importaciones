@@ -1,177 +1,198 @@
-# IMPORTADORA DE PRODUCTOS (PLANTILLA BASE MARCA BLANCA)
-> **Arquitectura Full-Stack:** Angular (Tailwind CSS) + Laravel (RESTful API) + MySQL / PostgreSQL
+# IMPORTADORA DE PRODUCTOS (ARQUITECTURA SERVERLESS)
+> **Stack Moderno:** Angular 19 (Tailwind CSS) + Google Cloud Firebase (Firestore, Auth, Storage) + GitHub Pages  
+> **100% Gratuito:** Plan Spark de Firebase + Hosting estático en GitHub Pages (Sin servidores de pago, sin SQL, sin PHP).  
+> **Administrador Autorizado:** `cruz.arias.beymar@itsecsucre.edu.bo`
 
 ---
 
-## 📌 1. Visión General y Decisiones de Arquitectura
+## 📌 1. Visión General y Ventajas de la Migración
 
-El sistema está diseñado como una **plantilla base "marca blanca"** de alta escalabilidad, modularidad y rendimiento para importadoras y comercios de productos físicos.
-
-### Principios Clave:
-1. **Catálogo Público Ultra-rápido y Seguro:**
-   - No requiere registro ni login para los clientes finales.
-   - Los productos con estado `vendido` se excluyen automáticamente a nivel de base de datos (`where status != 'vendido'`), optimizando ancho de banda y renderizado.
-   - **Privacidad Financiera:** El campo `cost_price` (precio de costo) está protegido mediante `PublicProductResource` y el atributo `$hidden` en Eloquent; el cliente público **nunca** puede conocer el costo o margen de ganancia.
-
-2. **Integración con WhatsApp:**
-   - Botón doble Call-To-Action: **"Pedir por WhatsApp"** y **"Reservar"**.
-   - Modal interactivo para capturar el **"Nombre del Cliente"**.
-   - Redirección dinámica a `https://wa.me/59172970461` con los mensajes prellenados exactos requeridos:
-     - **Compra:** `Hola, quiero comprar el producto [Nombre del Producto] de precio [Precio].`
-     - **Reserva:** `Hola, quiero reservar el producto [Nombre del Producto] de precio [Precio].`
-
-3. **Lógica de Reservas con Expiración a 7 Días:**
-   - Cada reserva registra la fecha de expiración calculada a 7 días exactos (`now()->addDays(7)`).
-   - Un **Console Command** en Laravel (`reservations:check-expired`) programado con el Task Scheduler (`Schedule::command()->daily()`) analiza diariamente las reservas vencidas y regresa automáticamente los productos de `reservado` a `disponible`.
-
-4. **Historial de Ventas y Contabilidad Automática:**
-   - Implementado mediante `ProductObserver`. Cada vez que el estado de un producto cambia a `vendido`, se genera automáticamente un registro inmutable en `sales_history` con:
-     - `sale_price` (monto cobrado)
-     - `cost_price` (costo histórico al momento de venta)
-     - `net_profit = sale_price - cost_price` (ganancia neta)
-     - `sold_at = now()`
-   - Métricas en el Dashboard del administrador:
-     - **Ingresos totales del mes**
-     - **Ganancia neta del mes**
-     - **Total de productos vendidos**
-     - **Reservas activas**
-     - **Gráfico visual de barras mes a mes**
+El sistema ha sido completamente transformado a una arquitectura **JAMstack / Serverless**:
+- **Sin backend tradicional ni base de datos SQL de pago:** Se eliminó la necesidad de servidores VPS, Apache, PHP y MySQL.
+- **Base de Datos Gratuita de Google (Cloud Firestore):** Base de datos NoSQL documental de ultra-baja latencia con hasta 50,000 lecturas y 20,000 escrituras diarias gratuitas en el plan Spark.
+- **Autenticación Administrador con Google / Firebase Auth:** Acceso restringido exclusivamente a tu correo `cruz.arias.beymar@itsecsucre.edu.bo` mediante contraseña o con 1 clic usando "Iniciar Sesión con Google".
+- **Alojamiento 100% Gratuito en GitHub Pages:** La aplicación compila a HTML, CSS y JavaScript estático con enrutamiento Hash (`/#/`), garantizando que nunca ocurra el error 404 al recargar la página.
+- **Vigencia y Expiración Automática de Reservas a 7 días:** Ya no se requiere un servidor de tareas Cron; el frontend evalúa y expira reservas vencidas de forma dinámica e instantánea liberando los productos a `disponible`.
+- **Integración con WhatsApp (+591 72970461):** Botones directos de compra y reserva con mensajes prellenados y captura del nombre del cliente.
 
 ---
 
-## 🗄️ 2. Estructura de la Base de Datos Relacional
+## ⚙️ 2. Guía Paso a Paso: Configuración en Google Firebase (100% Gratuito)
 
-El archivo ejecutable se encuentra en: [`database/schema.sql`](file:///c:/Users/USUARIO/Documents/BEYKER/IMPORTADORA/database/schema.sql).
+Sigue estos sencillos pasos en la plataforma de Google para enlazar tu base de datos y autenticación:
 
-### Tablas Principales:
-1. `users`: Administradores con contraseñas cifradas (bcrypt) y roles.
-2. `personal_access_tokens`: Tokens de autenticación Bearer mediante Laravel Sanctum.
-3. `categories`: Clasificación de productos (slug, nombre, estado).
-4. `products`: Catálogo general con `cost_price` (oculto) y `sale_price` (público), estados: `['disponible', 'reservado', 'vendido']`.
-5. `product_images`: Carrusel de **1 a 3 fotos** por producto (`image_url`, `is_primary`, `sort_order`).
-6. `reservations`: Registro de reservas con `customer_name`, `customer_phone`, `reserved_at`, `expires_at` (7 días exactos) y estado (`activa`, `completada`, `expirada`, `cancelada`).
-7. `sales_history`: Registro contable histórico con `sale_price`, `cost_price`, `net_profit` y `sold_at`.
+### Paso 1: Crear tu Proyecto en Firebase
+1. Ve a [https://console.firebase.google.com/](https://console.firebase.google.com/) con tu cuenta de Google (`cruz.arias.beymar@itsecsucre.edu.bo` o tu cuenta principal).
+2. Haz clic en **"Agregar proyecto"** (o "Crear un proyecto").
+3. Asigna un nombre al proyecto (por ejemplo: `importadora-beyker09`).
+4. Desactiva Google Analytics (opcional) y haz clic en **"Crear proyecto"**. Espera unos segundos a que se cree.
 
 ---
 
-## 🚀 3. Estructura de Archivos del Proyecto
+### Paso 2: Registrar la Aplicación Web y Copiar Credenciales
+1. En el panel principal del proyecto en Firebase, haz clic en el icono de **Web** (`</>`).
+2. Escribe el apodo de la app: `Importadora Web`.
+3. Haz clic en **"Registrar app"**.
+4. Firebase te mostrará un bloque de código `firebaseConfig` con las siguientes claves:
+   - `apiKey`
+   - `authDomain`
+   - `projectId`
+   - `storageBucket`
+   - `messagingSenderId`
+   - `appId`
+5. Abre el archivo [`frontend/src/environments/environment.ts`](file:///c:/Users/USUARIO/Documents/IMPORTACIONES/frontend/src/environments/environment.ts) en tu proyecto y reemplaza los valores de `firebase`:
 
-```text
-IMPORTADORA/
-├── database/
-│   └── schema.sql                          # Script SQL completo con tablas, índices y datos semilla
-├── backend/                                # API RESTful en Laravel (PHP)
-│   ├── app/
-│   │   ├── Console/
-│   │   │   ├── Commands/
-│   │   │   │   └── CheckExpiredReservations.php  # Tarea Artisan para expirar reservas a 7 días
-│   │   │   └── Kernel.php                  # Scheduler diario (00:01)
-│   │   ├── Http/
-│   │   │   ├── Controllers/Api/
-│   │   │   │   ├── AuthController.php      # Login y Logout de administradores
-│   │   │   │   ├── PublicProductController.php # Catálogo público y reserva desde WhatsApp
-│   │   │   │   └── Admin/
-│   │   │   │       ├── ProductController.php       # CRUD productos (costos y 1-3 imágenes)
-│   │   │   │       ├── ReservationController.php   # Control de reservas
-│   │   │   │       ├── DashboardController.php     # 4 KPIs y gráfico mensual
-│   │   │   │       └── SalesHistoryController.php  # Reporte contable
-│   │   │   └── Resources/
-│   │   │       ├── PublicProductResource.php       # Oculta cost_price
-│   │   │       └── AdminProductResource.php        # Incluye cost_price y margen
-│   │   ├── Models/
-│   │   │   ├── User.php
-│   │   │   ├── Category.php
-│   │   │   ├── Product.php                 # Scopes, casts y relaciones
-│   │   │   ├── ProductImage.php            # 1 a 3 imágenes para carrusel
-│   │   │   ├── Reservation.php             # Lógica de 7 días
-│   │   │   └── SaleHistory.php             # Registro contable
-│   │   ├── Observers/
-│   │   │   └── ProductObserver.php         # Dispara venta automática al cambiar a 'vendido'
-│   │   └── Providers/
-│   │       └── AppServiceProvider.php      # Registro de Observer
-│   ├── routes/
-│   │   ├── api.php                         # Rutas públicas y protegidas con Sanctum
-│   │   └── console.php                     # Programación de tareas (Laravel 11)
-│   ├── composer.json
-│   └── .env.example
-└── frontend/                               # Aplicación Angular con Tailwind CSS
-    ├── src/
-    │   ├── app/
-    │   │   ├── components/
-    │   │   │   ├── navbar/                 # "Importadora de productos" + buscador
-    │   │   │   ├── product-catalog/        # Grid responsiva sin productos vendidos
-    │   │   │   ├── product-detail/         # Carrusel (1-3 fotos) y botones CTA
-    │   │   │   ├── whatsapp-modal/         # Modal "Nombre del Cliente" + link dinámico
-    │   │   │   └── admin/
-    │   │   │       ├── admin-layout/       # Layout administrativo
-    │   │   │       ├── admin-login/        # Acceso admin
-    │   │   │       ├── admin-dashboard/    # 4 Tarjetas métricas + Gráfico de barras
-    │   │   │       ├── admin-products/     # CRUD productos y fotos
-    │   │   │       ├── admin-reservations/ # Gestión de reservas (7 días)
-    │   │   │       └── admin-sales-history/# Historial de ventas
-    │   │   ├── guards/auth.guard.ts        # Protección de rutas
-    │   │   ├── interceptors/auth.interceptor.ts # Bearer token
-    │   │   ├── models/product.model.ts     # Interfaces TypeScript
-    │   │   ├── services/
-    │   │   │   ├── auth.service.ts
-    │   │   │   ├── product.service.ts
-    │   │   │   ├── reservation.service.ts
-    │   │   │   ├── dashboard.service.ts
-    │   │   │   └── whatsapp.service.ts     # Formato exacto de mensaje
-    │   │   ├── app.routes.ts
-    │   │   ├── app.config.ts
-    │   │   └── app.component.ts
-    │   ├── environments/
-    │   │   └── environment.ts              # API URL y Teléfono WhatsApp (59172970461)
-    │   ├── index.html                      # Título: "Importadora de productos"
-    │   ├── styles.css                      # Directivas Tailwind CSS
-    │   └── main.ts
-    ├── angular.json
-    ├── tailwind.config.js
-    ├── tsconfig.json
-    └── package.json
+```typescript
+export const environment = {
+  production: true,
+  whatsappPhone: '59172970461',
+  appName: 'Importadora de productos',
+  adminEmail: 'cruz.arias.beymar@itsecsucre.edu.bo',
+  firebase: {
+    apiKey: "AIzaSy...",
+    authDomain: "importadora-beyker09.firebaseapp.com",
+    projectId: "importadora-beyker09",
+    storageBucket: "importadora-beyker09.firebasestorage.app",
+    messagingSenderId: "123456789012",
+    appId: "1:123456789012:web:abcdef..."
+  }
+};
 ```
 
 ---
 
-## ⚙️ 4. Guía de Puesta en Marcha Paso a Paso
+### Paso 3: Activar Cloud Firestore (Base de Datos)
+1. En el menú lateral izquierdo de Firebase Console, ve a **Compilación > Firestore Database**.
+2. Haz clic en **"Crear base de datos"**.
+3. Selecciona la ubicación más cercana (por ejemplo: `nam5 (us-central)` o `southamerica-east1`).
+4. En modo de seguridad, puedes elegir "Modo producción" o "Modo de prueba" y pulsar **Habilitar**.
+5. Ve a la pestaña **Reglas** (Rules) de Firestore, borra lo que haya y pega las siguientes reglas exactas (también disponibles en `firestore.rules`):
 
-### Paso 1: Inicializar la Base de Datos en MySQL
-Abre tu consola o phpMyAdmin y ejecuta:
-```bash
-mysql -u root -p < database/schema.sql
-```
-*Esto creará la base de datos `importadora_db` con las 7 tablas relacionadas y datos de prueba inmediatos.*
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isAdmin() {
+      return request.auth != null && 
+        request.auth.token.email.lower() == 'cruz.arias.beymar@itsecsucre.edu.bo';
+    }
 
-### Paso 2: Configurar y Ejecutar el Backend (Laravel)
-```bash
-cd backend
-composer install
-cp .env.example .env
-php artisan key:generate
-php artisan serve
-```
-El servidor backend quedará disponible en: `http://localhost:8000`.
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
 
-#### Configuración del Cron Job para la Expiración a 7 Días:
-En tu servidor de producción (Linux / cPanel / Cron):
-```bash
-* * * * * cd /ruta/a/tu/backend && php artisan schedule:run >> /dev/null 2>&1
-```
-Para probar manualmente la expiración en desarrollo:
-```bash
-php artisan reservations:check-expired
-```
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'active_reservation', 'updated_at'])
+                   && request.resource.data.status == 'reservado'
+                   && resource.data.status == 'disponible';
+    }
 
-### Paso 3: Configurar y Ejecutar el Frontend (Angular + Tailwind CSS)
-```bash
-cd frontend
-npm install
-npm start
-```
-La aplicación web abrirá en: `http://localhost:4200`.
+    match /reservations/{reservationId} {
+      allow read: if true;
+      allow create: if request.resource.data.status == 'activa';
+      allow update, delete: if isAdmin();
+    }
 
-### Credenciales Administrativas por Defecto:
-- **URL Admin:** `http://localhost:4200/admin/login`
-- **Correo:** `admin@importadora.com`
-- **Contraseña:** `password123`
+    match /sales_history/{saleId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
+```
+6. Haz clic en **"Publicar"** (Publish).
+
+---
+
+### Paso 4: Activar Autenticación (Firebase Authentication)
+1. En el menú izquierdo, ve a **Compilación > Authentication**.
+2. Haz clic en **"Comenzar"** (Get Started).
+3. En la pestaña **Método de acceso** (Sign-in method):
+   - **Correo electrónico/contraseña:** Habilítalo y guarda.
+   - **Google:** Habilítalo, selecciona tu correo de soporte y guarda.
+4. En la pestaña **Users** (Usuarios), haz clic en **"Agregar usuario"**:
+   - **Correo electrónico:** `cruz.arias.beymar@itsecsucre.edu.bo`
+   - **Contraseña:** Elige una contraseña segura (por ejemplo: `Admin2026!`).
+   - Haz clic en **"Agregar usuario"**.
+
+---
+
+### Paso 5: Activar Firebase Storage (Para Fotos de Productos)
+1. En el menú izquierdo, ve a **Compilación > Storage**.
+2. Haz clic en **"Comenzar"**, elige ubicación y pulsa **Siguiente > Finalizar**.
+3. Ve a la pestaña **Reglas** (Rules) y pega las siguientes reglas (disponibles en `storage.rules`):
+
+```javascript
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /products/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null && 
+        request.auth.token.email.lower() == 'cruz.arias.beymar@itsecsucre.edu.bo';
+    }
+  }
+}
+```
+4. Haz clic en **"Publicar"**.
+
+---
+
+### Paso 6: Sincronizar Catálogo Inicial con 1 Clic
+Una vez que pegues tus credenciales en `environment.ts` e inicies sesión en tu panel administrador (`/#/admin/login`), verás en la parte superior el botón:  
+**`Cargar a Firestore`**.  
+Al pulsarlo, el sistema migrará automáticamente todas tus categorías, productos existentes, reservas y ventas de prueba directamente a tu nueva base de datos Cloud Firestore.
+
+---
+
+## 🚀 3. Despliegue Gratuito en GitHub Pages
+
+Dado que tu dominio/usuario es `beyker09`, el despliegue es completamente automático:
+
+### Opción A: Despliegue Automático con GitHub Actions (Recomendado)
+El proyecto ya cuenta con el archivo de automatización [`.github/workflows/deploy.yml`](file:///.github/workflows/deploy.yml).
+
+1. Crea tu repositorio en GitHub bajo tu cuenta: `https://github.com/beyker09/IMPORTACIONES` (o el nombre que prefieras).
+2. Sube tus cambios a GitHub:
+   ```bash
+   git init
+   git add .
+   git commit -m "Migracion a Firebase Serverless y GitHub Pages"
+   git branch -M main
+   git remote add origin https://github.com/beyker09/IMPORTACIONES.git
+   git push -u origin main
+   ```
+3. En GitHub, ve a tu repositorio > **Settings > Pages**:
+   - En **Build and deployment > Source**, selecciona **GitHub Actions**.
+4. ¡Listo! En 1 minuto tu catálogo estará disponible públicamente en:  
+   `https://beyker09.github.io/IMPORTACIONES/`
+
+### Opción B: Despliegue Manual con el script integrado
+Si prefieres generar los archivos tú mismo:
+1. En la carpeta `frontend`, ejecuta:
+   ```bash
+   npm run build:gh-pages
+   ```
+2. Los archivos listos para producción se generarán en: `frontend/dist/importadora-frontend/browser`.
+3. Sube el contenido de esa carpeta a la rama `gh-pages` de tu repositorio.
+
+---
+
+## 💻 4. Cómo Probar Localmente en tu Computadora
+
+No necesitas tener XAMPP, MySQL ni PHP abiertos. Solo ejecuta:
+
+1. Haz doble clic en el archivo [`INICIAR_SISTEMA.bat`](file:///c:/Users/USUARIO/Documents/IMPORTACIONES/INICIAR_SISTEMA.bat) o en tu terminal:
+   ```bash
+   cd frontend
+   npm start
+   ```
+2. Abre en tu navegador:
+   - **Catálogo de Clientes:** `http://localhost:4200/`
+   - **Panel Administrativo:** `http://localhost:4200/#/admin/login`
+3. Ingresa con:
+   - **Correo:** `cruz.arias.beymar@itsecsucre.edu.bo`
+   - **Contraseña:** La contraseña que creaste en Firebase (o en modo local cualquier texto si aún no agregaste las claves).

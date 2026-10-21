@@ -2,6 +2,8 @@ import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { AuthService } from '../../../services/auth.service';
+import { FirebaseService } from '../../../services/firebase.service';
+import { ProductService } from '../../../services/product.service';
 
 @Component({
   selector: 'app-admin-layout',
@@ -23,7 +25,18 @@ import { AuthService } from '../../../services/auth.service';
                 </div>
                 <div>
                   <span class="text-sm font-bold tracking-tight block">Importadora de productos</span>
-                  <span class="text-[10px] text-indigo-300 font-medium block uppercase tracking-wider">Panel Administrativo</span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] text-indigo-300 font-medium block uppercase tracking-wider">Panel Admin</span>
+                    @if (firebaseService.isConfigured()) {
+                      <span class="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Firebase Conectado
+                      </span>
+                    } @else {
+                      <span class="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-950 text-amber-400 border border-amber-800" title="Configura tus credenciales de Firebase en environment.ts para sincronizar en tiempo real">
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span> Modo Local
+                      </span>
+                    }
+                  </div>
                 </div>
               </a>
             </div>
@@ -58,6 +71,27 @@ import { AuthService } from '../../../services/auth.service';
 
             <!-- Acciones Derecha -->
             <div class="flex items-center gap-2">
+              
+              <!-- Usuario actual -->
+              @if (authService.currentUser(); as user) {
+                <span class="hidden lg:inline-block text-[11px] text-slate-300 font-mono bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700">
+                  {{ user.email }}
+                </span>
+              }
+
+              @if (firebaseService.isConfigured()) {
+                <button
+                  (click)="syncInitialData()"
+                  [disabled]="isSyncing"
+                  title="Sincronizar catálogo inicial completo con Cloud Firestore"
+                  class="hidden sm:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 border border-indigo-700/50 transition-colors">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span>{{ isSyncing ? 'Sincronizando...' : 'Cargar a Firestore' }}</span>
+                </button>
+              }
+
               <a 
                 routerLink="/" 
                 target="_blank"
@@ -65,7 +99,7 @@ import { AuthService } from '../../../services/auth.service';
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                 </svg>
-                <span>Ver Tienda</span>
+                <span>Ver Catálogo</span>
               </a>
 
               <button 
@@ -101,4 +135,23 @@ import { AuthService } from '../../../services/auth.service';
 })
 export class AdminLayoutComponent {
   authService = inject(AuthService);
+  firebaseService = inject(FirebaseService);
+  productService = inject(ProductService);
+  isSyncing = false;
+
+  syncInitialData(): void {
+    if (confirm('¿Deseas sincronizar todos los datos iniciales (categorías, productos, reservas, ventas) con tu base de datos Cloud Firestore?')) {
+      this.isSyncing = true;
+      this.productService.seedInitialDataToFirestore()
+        .then(() => {
+          this.isSyncing = false;
+          alert('¡Datos sincronizados exitosamente con Google Cloud Firestore!');
+          window.location.reload();
+        })
+        .catch((err) => {
+          this.isSyncing = false;
+          alert('Error sincronizando datos con Firestore: ' + (err.message || err));
+        });
+    }
+  }
 }
